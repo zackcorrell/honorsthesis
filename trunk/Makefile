@@ -6,7 +6,7 @@
 include Makefile.inc
 
 LIBDIRS = 
-DRIVERDIRS = src/laser_driver src/gps_driver src/roboteq_driver src/laser_merge src/vision_driver src/localize_driver
+DRIVERDIRS = src/roboteq_driver src/mricp_plugin
 EXEDIRS = 
 
 # Build whole project

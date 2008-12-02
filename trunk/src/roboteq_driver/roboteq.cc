@@ -112,7 +112,7 @@ driver
 #include <pthread.h>  // for pthread stuff 
 #include <sys/poll.h> // for poll and poll_fd
 #include <math.h>
-#include <ctype.h>
+#include <ctype.h> // For char/string manipulation: tolower(...)
 
 #include <libplayercore/playercore.h>
 
@@ -121,6 +121,8 @@ driver
 #define MAX_MOTOR_SPEED			127
 #define roboteqplugin_CON_TIMEOUT		10      // seconds to time-out on setting RS-232 mode
 #define roboteqplugin_DEFAULT_BAUD	9600 
+#define WHEEL_CIRCUMFERENCE .4084
+#define ROBOT_BASE .5
 
 // *************************************
 // some assumptions made by this driver:
@@ -147,7 +149,9 @@ driver
 #define REVERSE "!B"
 #define LEFT "!A"
 #define RIGHT "!a"
-
+#define RIGHT_ENCODER "?Q4/r"
+#define LEFT_ENCODER "?Q5/r"
+#define RPM_ENCODER "?Z/r"
 ///////////////////////////////////////////////////////////////////////////
 
 class roboteqplugin:public Driver
@@ -168,7 +172,12 @@ class roboteqplugin:public Driver
 
       int FormMotorCmd(char* cmd_str, short trans_command, short rot_command);
       int ProcessEncoderData();
-
+      int readVelocity(const char command [6], int sizeOfCommand,double *RPM_right,double *RPM_left);
+      int readEncoder(const char command [6], int sizeOfCommand,double *encoder_value);
+      
+      // Converts a given string to a double value (A while number)
+      double hextodec(char *string);
+      
       // current data
       player_position2d_data_t data;
       player_devaddr_t position2d_id;
@@ -568,101 +577,151 @@ int roboteqplugin::FormMotorCmd(char* cmd_str, short trans_command, short rot_co
 int roboteqplugin::ProcessEncoderData()
 {
 	
-	char buffer[1];
-	char input[16];
+
 	//int bytesread;
 	
+	double left_encoder = 0;
+	double right_encoder = 0;
+	double left_RPM = 0;
+	double right_RPM = 0;
+	readEncoder(LEFT_ENCODER,4,&left_encoder);
+	readEncoder(RIGHT_ENCODER,4,&right_encoder);
+	readVelocity(RPM_ENCODER,3,&right_RPM,&left_RPM);
 	
-	// Write out command for motor 1 position
-	write(roboteqplugin_fd, "?Q4\r", 4);
-	tcdrain(roboteqplugin_fd);
-	
-	
-	// Keep reading serial port characters one at a time until we encounter a /r
-	while(buffer[0] != '\r')
-	{
-		// Read one character into Buffer
-		read(roboteqplugin_fd, buffer, 1);
-		// Append the character to the input string
-		strcat(input, buffer);
-	}
-	
-	// The input string is a hex number (in characters), we're going to have to convert it to an int somehow
-	// The hex values
-
-	// Wait for the question char... (TEST THIS CODE)
-	// Jeremy was here :-P
-	char prewait;
-	while(read(roboteqplugin_fd, &prewait, 1) != 0 && prewait != '?');
-	
-	int TOTAL_INPUT = 10;
-	char inputData[TOTAL_INPUT];
-	int inputRead = 0;
-	for(int i = 0; i < TOTAL_INPUT; i++)
-	{
-		// Read single char into temp
-		char temp;
-		
-		// End of file or 'W' = stop reading
-		if(read(roboteqplugin_fd, &temp, 1) == 0 || temp == 'W')
-			break;
-		else
-			inputData[inputRead++] = temp;
-	}
-	
-	// Now that we have input data from [0 .. inpuRead - 1], convert to data
-	int data = 0;
-	int multiple = 1;
-	for(int i = inputRead - 1; i >= 0; i--)
-	{
-		// Convert current char to correct int value
-		int temp = 0;
-		inputData[i] = tolower(inputData[i]);
-		if(inputData[i] >= '0' || inputData[i] <= '9')
-			temp = inputData[i] - '0'; // Substract ascii offset
-		else if(inputData[i] >= 'a' || inputData[i] <= 'z')
-			temp = inputData[i] - 'a' + 10;
-		
-		// Add the data by the multiple and grow it
-		data += temp * multiple;
-		multiple *= 16;
-	}
-	
-	// Repeat this process for ?q4\r (relative position 1), ?q5\r (relative position 2), ?z1\r (speed 1), and ?z2\r (speed 2) 
+	player_position2d_data_t posdata;
 	
 	// Then do math to convert differential stuff to x and theta and fill in px, pa, vx, va
+	double distance = ((left_encoder + right_encoder) *WHEEL_CIRCUMFERENCE)/ 2.0;
+	double thetaPos = (left_encoder - right_encoder) / ROBOT_BASE; //WHEEL_BASE is the width between the drive wheels
 	
-	distance = ((left_encoder + right_encoder) *WHEEL_CIRCUMFERENCE)/ 2.0
-	thetaPos = (left_encoder - right_encoder) / ROBOT_BASE; //WHEEL_BASE is the width between the drive wheels
 	posdata.pos.px = distance * sin(thetaPos);
 	posdata.pos.py = distance * cos(thetaPos);
 	posdata.pos.pa = thetaPos;
 	
 	double position_time=0;
-	    
-	player_position2d_data_t posdata;
-	velocity = ((left_RPM + right_RPM) *WHEEL_CIRCUMFERENCE)/ 2.0
-	thetaVel = (left_RPM - right_RPM) / ROBOT_BASE; //WHEEL_BASE is the width between the drive wheels
+	
+	double velocity = ((left_RPM + right_RPM) *WHEEL_CIRCUMFERENCE)/ 2.0;
+	double thetaVel = (left_RPM - right_RPM) / ROBOT_BASE; //WHEEL_BASE is the width between the drive wheels
 	posdata.vel.px = velocity * sin(thetaVel);
 	posdata.vel.py = velocity * cos(thetaVel);
 	posdata.vel.pa = thetaVel;
-	
-	//posdata.vel.px = motorTrans;
-	//posdata.vel.py = 0;
-	//posdata.vel.pa = motorRot;
-
-	//posdata.pos.px = 0;
-	//posdata.pos.py = 0;
-	//posdata.pos.pa = 0;
 
 	posdata.stall=0;
 
 	Publish(device_addr, PLAYER_MSGTYPE_DATA, PLAYER_POSITION2D_DATA_STATE, 
 			(unsigned char*) &posdata, sizeof(posdata), &position_time);
+	return 0;
 }
 
-double ReadValue()
+int roboteqplugin::readEncoder(const char command[6], int sizeOfCommand,double *encoder_value)
 {
+	if(command != NULL)
+	{
+		// Write out command for sum of relative wheel positions
+		write(roboteqplugin_fd, command, sizeOfCommand);
+		tcdrain(roboteqplugin_fd);
+	}
+	
+		// Keep reading serial port characters one at a time until we encounter a /r
+		// This was removed since it does not save to input, it simply dumps out data until a '/r' is recieved
+		/*while(buffer[0] != '\r')
+		{
+			// Read one character into Buffer
+			read(roboteqplugin_fd, buffer, 1);
+			
+			// Append the character to the input string
+			strcat(input, buffer);
+		}*/
 		
+		// The input string is a hex number (in characters), we're going to have to convert it to an int somehow
+		// The hex values
+
+		// Wait for the question char...
+		char prewait;
+		while(read(roboteqplugin_fd, &prewait, 1) != 0);// && prewait != '?');
+		
+		// String we are reading into
+		char inputData[32];
+		
+		// The ammount of chars read
+		int inputRead = 0;
+		
+		// For each possible input
+		for(int i = 0; i < 32; i++)
+		{
+			// Read single char into temp
+			char temp;
+			
+			// End reading data if there is:
+			// 1) No data left to read
+			// 2) It ends with a 'w' char
+			// 3) Ends with a system character (0 to 13)
+			int ret = read(roboteqplugin_fd, &temp, 1);
+			if( ret == 0 || ret == 'W' || ret == 'w')
+				break;
+			else
+			{
+				// Case 3:
+				// for 0 to 13
+				for (int x =0;x<=13;x++)
+				{
+					if (ret == x)
+						break;
+				}
+			}
+
+			// Everything is good, save
+			inputData[inputRead++] = temp;
+		}
+		inputData[inputRead] = '\0';
+		
+		// Now that we have input data from [0 .. inpuRead - 1], convert the hex to decimal
+		double data = hextodec(inputData);
+		
+		// Save data into a return pointer
+		*encoder_value = data;
+		
+		return 0;
+}
+
+double roboteqplugin::hextodec(char *inputData)
+{
+	// The final data
+	double data=0.0;
+	
+	// The hex base for the position
+	int base = 1;
+	
+	// Save the string length
+	int inputRead = (int)strlen(inputData);
+
+	// For each char in the hex string, from right to left
+	for(int i = inputRead - 1; i >= 0; i--)
+	{
+		// Look at the current hex char, and cast it to a lower char if needed
+		int temp = 0;
+		inputData[i] = tolower(inputData[i]);
+		
+		// If the char is a digit, cast from ASCII to decimal
+		if(inputData[i] >= '0' || inputData[i] <= '9')
+			temp = inputData[i] - (int)'0';
+		
+		// Else if a letter, cast from ASCII to decimal
+		else if(inputData[i] >= 'a' || inputData[i] <= 'z')
+			temp = inputData[i] - (int)'a' + 10;
+		
+		// Add the data by the multiple and grow it
+		data += (double)(temp * base);
+		base *= 16;
+	}
+
+	return data;
+}
+
+int roboteqplugin::readVelocity(const char command[6], int sizeOfCommand,double *RPM_right,double *RPM_left)
+{
+	readEncoder(command,sizeOfCommand,RPM_right);
+	readEncoder(NULL,sizeOfCommand,RPM_left);
+	return 0;
 }
 //TODO Add Odometry Data/encoder information (Page 151 in Manual)

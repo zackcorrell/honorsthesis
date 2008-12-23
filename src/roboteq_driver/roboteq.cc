@@ -153,6 +153,10 @@ driver
 #define RIGHT_ENCODER "?Q4\r"
 #define LEFT_ENCODER "?Q5\r"
 #define RPM_ENCODER "?Z\r"
+
+// Maximum tries to read before giving up
+#define GIVEUP_MAX 100
+
 ///////////////////////////////////////////////////////////////////////////
 
 class roboteqplugin:public Driver
@@ -173,11 +177,13 @@ private:
 
 	int FormMotorCmd(char* cmd_str, short trans_command, short rot_command);
 	int ProcessEncoderData();
-	int readVelocity(const char command [6], int sizeOfCommand,double *RPM_right,double *RPM_left);
-	int readEncoder(const char command [6], int sizeOfCommand,double *encoder_value);
+	int readVelocity(char command [6], int sizeOfCommand, int *RPM_right, int *RPM_left);
+	int readEncoder(char command [6], int sizeOfCommand, int *encoder_value);
 
 	// Converts a given string to a double value (A while number)
-	int hextodec(char *string);
+	bool hextodec(char *string, unsigned int *output);
+	bool ReadHexFromSerial(char *command, int outputsize, int *output);
+	bool isHex(char input);
 
 	// current data
 	player_position2d_data_t data;
@@ -572,13 +578,11 @@ int roboteqplugin::FormMotorCmd(char* cmd_str, short trans_command, short rot_co
 
 int roboteqplugin::ProcessEncoderData()
 {
-
-	//int bytesread;
-
-	double left_encoder = 0;
-	double right_encoder = 0;
-	double left_RPM = 0;
-	double right_RPM = 0;
+	int left_encoder = 0;
+	int right_encoder = 0;
+	int left_RPM = 0;
+	int right_RPM = 0;
+	
 	readEncoder(LEFT_ENCODER,4,&left_encoder);
 	readEncoder(RIGHT_ENCODER,4,&right_encoder);
 	readVelocity(RPM_ENCODER,3,&right_RPM,&left_RPM);
@@ -586,8 +590,8 @@ int roboteqplugin::ProcessEncoderData()
 	//printf("left encoder value:%f   right encoder value: %f \n",left_encoder,right_encoder);
 
 	// Then do math to convert differential stuff to x and theta and fill in px, pa, vx, va
-	double distance = (((left_encoder + right_encoder)/(2.0 * 2048.0)) *WHEEL_CIRCUMFERENCE);
-	double thetaPos = (left_encoder - right_encoder) / (ROBOT_BASE * 2048.0); //WHEEL_BASE is the width between the drive wheels
+	double distance = ((((double)left_encoder + (double)right_encoder)/(2.0 * 2048.0)) *WHEEL_CIRCUMFERENCE);
+	double thetaPos = ((double)left_encoder - (double)right_encoder) / (ROBOT_BASE * 2048.0);
 
 	posdata.pos.px += distance * cos(thetaPos);
 	posdata.pos.py += distance * sin(thetaPos);
@@ -596,7 +600,7 @@ int roboteqplugin::ProcessEncoderData()
 	double position_time=0;
 
 	double velocity = ((left_RPM + right_RPM) *WHEEL_CIRCUMFERENCE)/(60.0* 2.0);
-	double thetaVel = (left_RPM - right_RPM) / ROBOT_BASE; //WHEEL_BASE is the width between the drive wheels
+	double thetaVel = (left_RPM - right_RPM) / ROBOT_BASE; 
 	posdata.vel.px = velocity * cos(thetaVel);
 	posdata.vel.py = velocity * sin(thetaVel);
 	posdata.vel.pa = thetaVel;
@@ -608,85 +612,73 @@ int roboteqplugin::ProcessEncoderData()
 	return 0;
 }
 
-int roboteqplugin::readEncoder(const char command[6], int sizeOfCommand,double *encoder_value)
+int roboteqplugin::readEncoder(char command[6], int sizeOfCommand,int *encoder_value)
 {
-	// Write out command for sum of relative wheel positions
-	write(roboteqplugin_fd, command, sizeOfCommand);
-	tcdrain(roboteqplugin_fd);
+	int out;
+	if(ReadHexFromSerial(command, 1, &out))
+		printf("readEncoder::Input Error: ReadHexFromSerial returned true!\n");fflush(stdout);
 
-	// Wait for the question char...
-	char prewait;
-	while(read(roboteqplugin_fd, &prewait, 1) < 1 || prewait ==! '?');
-	// String we are reading into
-	char inputData[32];
+	*encoder_value = out;
 
-	// The ammount of chars read 
-	int inputRead = 0;
-	char returned[6] = {0, 0, 0 ,0, 0, 0};
-	returned[0] = '?';
-
-	for (int i=1; i<3; i++)
-	{
-		char temp;
-		while(read(roboteqplugin_fd, &temp, 1) < 1);
-		returned[i]=temp;
-		if (returned[i] ==13)
-		{
-			returned[i+1]=0;
-			break;
-		}
-	}
-	//if (strcmp(command,returned) == 0)
-	//	printf("got command!: %s\n", returned);fflush(stdout);
-
-	// For each possible input
-	for(int i = 0; i < 10; i++)
-	{
-		// Read single char into temp
-		char temp;
-		// End reading data if there is:
-		// 1) No data left to read
-		// 2) It ends with a 'w' char
-		// 3) Ends with a system character (0 to 13)
-		while(read(roboteqplugin_fd, &temp, 1)<1);
-		if( temp == 'W' || temp == 'w')
-			break;
-		else
-		{
-			// Everything is good, save
-			if (temp > 13)
-				inputData[inputRead++] = temp;
-		}
-	}
-	inputData[inputRead] = '\0';
-	//printf("command: %s\n",command);fflush(stdout);
-	//printf("hex data: %s\n",inputData);fflush(stdout);
-	// Now that we have input data from [0 .. inpuRead - 1], convert the hex to decimal
-	double data = hextodec(inputData);
-	//printf("dec data: %f\n",data);fflush(stdout);
-	// Save data into a return pointer
-	*encoder_value = data;
-	//printf("command: %s encoder value: %f\n",command,data);
 	return 0;
 }
 
-int roboteqplugin::hextodec(char *inputData)
+
+int roboteqplugin::readVelocity(char command[6], int sizeOfCommand, int *RPM_right, int *RPM_left)
+{
+	int out[2];
+	if(ReadHexFromSerial(command, 2, out))
+		printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);
+
+	*RPM_right = out[0];
+	*RPM_left = out[1];
+
+	return 0;
+}
+
+// Takes char input and returns true if hex
+bool roboteqplugin::isHex(char input)
+{
+	// Valid set of chars
+	char valid[] = "0123456789abcdef";
+
+	// To lower
+	input = tolower(input);
+
+	// Validate the character
+	bool checked = false;
+	for(int j = 0; j < (int)strlen(valid) && !checked; j++)
+		if(input == valid[j])
+			checked = true;
+
+	// Check if checked
+	if(checked == false)
+		return true;
+	return false; // Not hex
+}
+
+// Input is a hexadecimal string
+// Outpout, through a pointer, is the decimal value
+// If it returns true, there was an error, ignore output
+bool roboteqplugin::hextodec(char *inputData, unsigned int *output)
 {
 	// The final data
 	unsigned int data = 0;
 
 	// The hex base for the position
 	int base = 1;
-
+	
 	// Save the string length
 	int inputRead = (int)strlen(inputData);
     //printf("  input data: %s  ",inputData);
+	
 	// For each char in the hex string, from right to left
 	for(int i = inputRead - 1; i >= 0; i--)
 	{
 		// Look at the current hex char, and cast it to a lower char if needed
 		int temp = 0;
-		inputData[i] = tolower(inputData[i]);
+		if( !isHex(inputData[i]) )
+			return true; // Error
 
 		// If the char is a digit, cast from ASCII to decimal
 		if(inputData[i] >= '0' && inputData[i] <= '9')
@@ -701,93 +693,128 @@ int roboteqplugin::hextodec(char *inputData)
 		base *= 16;
 	}
 
-	return (int)data;
+	// Post answer
+	*output = data;
+
+	// Return no error
+	return false;
 }
 
-int roboteqplugin::readVelocity(const char command[6], int sizeOfCommand,double *RPM_right,double *RPM_left)
+// Input: Command string, and expected packets returned
+// Output: returns bool true on failure, false on success and a pointer to an array of interegers
+// NOTE: Please allocate the space yourself for the output pointer
+bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output)
 {
-
-	// Write out command for sum of relative wheel positions
-	write(roboteqplugin_fd, command, sizeOfCommand);
+	// Send out command
+	write(roboteqplugin_fd, command, strlen(command));
 	tcdrain(roboteqplugin_fd);
-	usleep(100);
-	char prewait;
-	while(read(roboteqplugin_fd, &prewait, 1) < 1 || prewait ==! '?')
+	
+	// Start index of command string
+	int commandindex = 0;
+	int giveup = 0;
+	
+	// For each expected output
+	for(int e = 0; e < outputsize; e++)
 	{
-		if (prewait !=0 && prewait !=63)
-			printf("Prewait: %d \n",prewait);fflush(stdout);
-	}
-	// String we are reading into
-
-
-	// The ammount of chars read 
-	int inputRead = 0;
-	char returned[6] = {0, 0, 0 ,0, 0, 0};
-	returned[0] = '?';
-
-	for (int i=1; i<3; i++)
-	{
-		char temp;
-		while(read(roboteqplugin_fd, &temp, 1) < 1);
-		returned[i]=temp;
-		if (returned[i] == 10)
+		// Wait for the start of echo, which is the char '?'
+		while(true)
 		{
-			returned[i]=0;
-			break;
+			// Read single character
+			int dataread;
+			int bytesread = read(roboteqplugin_fd, &dataread, 1);
+			printf("dataread: %d\n",dataread);
+			// If giveup reaches too high, we give up
+			if(giveup > GIVEUP_MAX)
+				return true;
+			
+			// If < 0, error
+			if(bytesread < 0)
+			{
+				printf("ReadHExFromSerial::There was an error parsing...\n");fflush(stdout);
+				return true;
+			}
+			// Nothing read...
+			else if(bytesread == 0)
+			{
+				// Do nothing...
+				giveup++;
+			}
+			// If there is data, and the data matches
+			else if(bytesread > 0 && (dataread == command[commandindex]))
+			{
+				// Grow the commandindex
+				commandindex++;
+				if(commandindex > (int)strlen(command) - 1)
+					break;
+			}
 		}
-	}
-	//if (strcmp(command,returned) == 0)
-	//printf("got command!: %s\n", returned);fflush(stdout);
-
-
-	char rightrpm[4];
-	char leftrpm[4];
-	// For each possible input
-	for(int i = 0; i < 2; i++)
-	{
-		// Read single char into temp
-		char temp;
-		while(read(roboteqplugin_fd, &temp, 1)<1);
-		if( temp == 'W' || temp == 'w' || temp == 10)
-			break;
-		else
+		
+		// Read off any non-visible characters
+		int dataread;
+		do
 		{
-			// Everything is good, save
-			if (temp > 32)
-				rightrpm[inputRead++] = temp;
+			// Read in a byte
+			int bytesread = read(roboteqplugin_fd, &dataread, 1);
+			
+			// if error with read, return error
+			if(bytesread < 0)
+				{
+					printf("ReadHexFromSerial:: bytesread<0 \n");fflush(stdout);
+					return true;
+				}
+			// If read in nothing, try again
+			else if(bytesread == 0)
+				giveup++;
+
+			// If we have failed too many times, give up
+			if(giveup > GIVEUP_MAX)
+				{
+					printf("ReadHexFromSerial:: give up is greater than giveup max \n");fflush(stdout);
+					return true;
+				}
 		}
-	}
-	rightrpm[inputRead] = '\0';
+		while(!isHex(dataread));
 
-	//printf("Right RPM: %s\n", rightrpm);
+		// Create the input buffer
+		char buffer[16];
+		buffer[0] = (char)dataread;
+		int bufferindex = 1;
 
-	inputRead=0;
-	// For each possible input
-	for(int i = 0; i < 4; i++)
-	{
-		// Read single char into temp
-		char temp;
-		while(read(roboteqplugin_fd, &temp, 1)<1);
-		if( temp == 'W' || temp == 'w')
-			break;
-		else
+		// Read in data
+		do
 		{
-			// Everything is good, save
-			if (temp > 32)
-				leftrpm[inputRead++] = temp;
+			// Read in a byte
+			int bytesread = read(roboteqplugin_fd, &buffer[bufferindex], 1);
+			
+			// if error with read, return error
+			if(bytesread < 0)
+				return true;
+			// If read in nothing, try again
+			else if(bytesread == 0)
+				giveup++;
+			// Else, data read, increment index of buffer
+			else
+				bufferindex++;
+
+			// If we have failed too many times, give up
+			if(giveup > GIVEUP_MAX)
+				return true;
+
 		}
+		while(isHex(dataread));
+		
+		// Cap off the hex string
+		buffer[bufferindex] = '\0';
+		
+		// Convert this packet to a decimal
+		unsigned int udata = 0;
+		hextodec(buffer, &udata);
+
+		// Cast and set to given output
+		output[e] = (int)udata;
 	}
-	leftrpm[inputRead] = '\0';
-	//printf("Left RPM: %s\n", leftrpm);
-
-	double rightdata = hextodec(rightrpm);
-	double leftdata = hextodec(leftrpm);
-
-	//printf("right dec data: %f\n", rightdata);fflush(stdout);
-	//printf("left dec data: %f\n", leftdata);fflush(stdout);
-
-	*RPM_right = rightdata;
-	*RPM_left = leftdata;
-	return 0;
+	
+	// Return false for no error
+	return false;
 }
-//TODO Add Odometry Data/encoder information (Page 151 in Manual)
+

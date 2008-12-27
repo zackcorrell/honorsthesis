@@ -531,6 +531,7 @@ void roboteqplugin::Main()
 		ProcessMessages();
 		pthread_testcancel();
 		// publish dummy data
+		printf("ProfessEncoderData(); \n");
 		ProcessEncoderData();
 		usleep(10);
 	}
@@ -582,11 +583,14 @@ int roboteqplugin::ProcessEncoderData()
 	int right_encoder = 0;
 	int left_RPM = 0;
 	int right_RPM = 0;
-	
+	printf("Before readEncoderLeft\n");fflush(stdout);
 	readEncoder(LEFT_ENCODER,4,&left_encoder);
+	printf("readEncoderLeft\n");fflush(stdout);
 	readEncoder(RIGHT_ENCODER,4,&right_encoder);
+	printf("readEncoderRight\n");fflush(stdout);
 	readVelocity(RPM_ENCODER,3,&right_RPM,&left_RPM);
-	
+	printf("readVelocity\n");fflush(stdout);
+
 	//printf("left encoder value:%f   right encoder value: %f \n",left_encoder,right_encoder);
 
 	// Then do math to convert differential stuff to x and theta and fill in px, pa, vx, va
@@ -618,9 +622,9 @@ int roboteqplugin::readEncoder(char command[6], int sizeOfCommand,int *encoder_v
 	if(ReadHexFromSerial(command, 1, &out))
 		printf("readEncoder::Input Error: ReadHexFromSerial returned true!\n");fflush(stdout);
 
-	*encoder_value = out;
+		*encoder_value = out;
 
-	return 0;
+		return 0;
 }
 
 
@@ -630,10 +634,10 @@ int roboteqplugin::readVelocity(char command[6], int sizeOfCommand, int *RPM_rig
 	if(ReadHexFromSerial(command, 2, out))
 		printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);
 
-	*RPM_right = out[0];
-	*RPM_left = out[1];
+		*RPM_right = out[0];
+		*RPM_left = out[1];
 
-	return 0;
+		return 0;
 }
 
 // Takes char input and returns true if hex
@@ -651,8 +655,8 @@ bool roboteqplugin::isHex(char input)
 		if(input == valid[j])
 			checked = true;
 
-	// Check if checked
-	if(checked == false)
+	// Check if checked, this was false !!!
+	if(checked == true)
 		return true;
 	return false; // Not hex
 }
@@ -667,11 +671,11 @@ bool roboteqplugin::hextodec(char *inputData, unsigned int *output)
 
 	// The hex base for the position
 	int base = 1;
-	
+
 	// Save the string length
 	int inputRead = (int)strlen(inputData);
-    //printf("  input data: %s  ",inputData);
-	
+	//printf("  input data: %s  ",inputData);
+
 	// For each char in the hex string, from right to left
 	for(int i = inputRead - 1; i >= 0; i--)
 	{
@@ -708,73 +712,74 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output
 	// Send out command
 	write(roboteqplugin_fd, command, strlen(command));
 	tcdrain(roboteqplugin_fd);
-	
+
 	// Start index of command string
 	int commandindex = 0;
 	int giveup = 0;
-	
-	// For each expected output
-	for(int e = 0; e < outputsize; e++)
+
+	// Wait for the start of echo, which is the char '?'
+	while(true)
 	{
-		// Wait for the start of echo, which is the char '?'
-		while(true)
-		{
-			// Read single character
-			int dataread;
-			int bytesread = read(roboteqplugin_fd, &dataread, 1);
-			printf("dataread: %d\n",dataread);
+		// Read single character
+		int dataread = 0;
+		int bytesread = read(roboteqplugin_fd, &dataread, 1);
+		if(dataread!=0)
+			printf("Does %d == %d??",dataread,command[commandindex]);fflush(stdout);
 			// If giveup reaches too high, we give up
-			if(giveup > GIVEUP_MAX)
-				return true;
-			
-			// If < 0, error
-			if(bytesread < 0)
-			{
-				printf("ReadHExFromSerial::There was an error parsing...\n");fflush(stdout);
-				return true;
-			}
-			// Nothing read...
-			else if(bytesread == 0)
-			{
-				// Do nothing...
-				giveup++;
-			}
-			// If there is data, and the data matches
-			else if(bytesread > 0 && (dataread == command[commandindex]))
-			{
-				// Grow the commandindex
-				commandindex++;
-				if(commandindex > (int)strlen(command) - 1)
-					break;
-			}
+		if(giveup > GIVEUP_MAX)
+		{
+			printf("ReadHexFromSerial::Give up max reached\n");fflush(stdout);
+			return true;
 		}
-		
+
+		// If < 0, error    i commented this out
+		//if(bytesread < 0)
+		//{
+		//	printf("ReadHexFromSerial::Bytesread < 0\n");fflush(stdout);
+		//	return true;
+		//}
+
+		// Nothing read...
+		else if(bytesread == 0)
+		{
+			// Do nothing...
+			giveup++;
+		}
+		// If there is data, and the data matches		
+		else if(bytesread > 0 && (dataread == command[commandindex]))
+		{
+			// Grow the commandindex
+			commandindex++;
+			if(commandindex > (int)strlen(command) - 2)
+				break;
+		}
 		// Read off any non-visible characters
 		int dataread;
 		do
 		{
 			// Read in a byte
 			int bytesread = read(roboteqplugin_fd, &dataread, 1);
-			
+
 			// if error with read, return error
-			if(bytesread < 0)
-				{
-					printf("ReadHexFromSerial:: bytesread<0 \n");fflush(stdout);
-					return true;
-				}
+			//if(bytesread < 0)
+			//{
+			//	printf("ReadHexFromSerial:: bytesread<0 \n");fflush(stdout);
+			//	return true;
+			//}
 			// If read in nothing, try again
-			else if(bytesread == 0)
+			// was an else if !!!
+			if(bytesread == 0)
 				giveup++;
 
 			// If we have failed too many times, give up
 			if(giveup > GIVEUP_MAX)
-				{
-					printf("ReadHexFromSerial:: give up is greater than giveup max \n");fflush(stdout);
-					return true;
-				}
+			{
+				printf("ReadHexFromSerial:: give up is greater than giveup max \n");fflush(stdout);
+				return true;
+			}
 		}
 		while(!isHex(dataread));
-
+		printf("found hex value->%d \n",dataread);fflush(stdout);
 		// Create the input buffer
 		char buffer[16];
 		buffer[0] = (char)dataread;
@@ -785,12 +790,15 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output
 		{
 			// Read in a byte
 			int bytesread = read(roboteqplugin_fd, &buffer[bufferindex], 1);
-			
+			printf("%s ",buffer);
 			// if error with read, return error
-			if(bytesread < 0)
-				return true;
-			// If read in nothing, try again
-			else if(bytesread == 0)
+			//if(bytesread < 0)
+			//{
+			//	printf("ReadHexFromSerial::Bytesread<0 \n");fflush(stdout);
+			//	return true;
+			//}
+			// If read in nothing, try again, was else if!!!
+			if(bytesread == 0)
 				giveup++;
 			// Else, data read, increment index of buffer
 			else
@@ -798,22 +806,25 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output
 
 			// If we have failed too many times, give up
 			if(giveup > GIVEUP_MAX)
+			{
+				printf("ReadHexFromSerial::Give up is greater than giveup max \n");fflush(stdout);
 				return true;
-
+			}
 		}
-		while(isHex(dataread));
-		
+		while(isHex(buffer[bufferindex]));
+		printf("buffer filled \n");fflush(stdout);
 		// Cap off the hex string
 		buffer[bufferindex] = '\0';
-		
+		printf("ReadHexFromSerial::buffer: %s----->",buffer);fflush(stdout);
 		// Convert this packet to a decimal
 		unsigned int udata = 0;
 		hextodec(buffer, &udata);
 
 		// Cast and set to given output
 		output[e] = (int)udata;
+		printf("output: %d \n",output);fflush(stdout);
 	}
-	
+
 	// Return false for no error
 	return false;
 }

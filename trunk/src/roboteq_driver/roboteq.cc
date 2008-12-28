@@ -182,7 +182,7 @@ private:
 
 	// Converts a given string to a double value (A while number)
 	bool hextodec(char *string, unsigned int *output);
-	bool ReadHexFromSerial(char *command, int outputsize, int *output);
+	bool ReadHexFromSerial(char *command, int *output);
 	bool isHex(char input);
 
 	// current data
@@ -583,16 +583,13 @@ int roboteqplugin::ProcessEncoderData()
 	int right_encoder = 0;
 	int left_RPM = 0;
 	int right_RPM = 0;
-	printf("Before readEncoderLeft\n");fflush(stdout);
+
 	readEncoder(LEFT_ENCODER,4,&left_encoder);
-	printf("readEncoderLeft\n");fflush(stdout);
 	readEncoder(RIGHT_ENCODER,4,&right_encoder);
-	printf("readEncoderRight\n");fflush(stdout);
 	readVelocity(RPM_ENCODER,3,&right_RPM,&left_RPM);
-	printf("readVelocity\n");fflush(stdout);
 
-	//printf("left encoder value:%f   right encoder value: %f \n",left_encoder,right_encoder);
-
+	printf("left encoder value:%d   right encoder value: %d \n",left_encoder,right_encoder);fflush(stdout);
+	printf("left RPM value:%d   right RPM value: %d \n",left_RPM,right_RPM);fflush(stdout);
 	// Then do math to convert differential stuff to x and theta and fill in px, pa, vx, va
 	double distance = ((((double)left_encoder + (double)right_encoder)/(2.0 * 2048.0)) *WHEEL_CIRCUMFERENCE);
 	double thetaPos = ((double)left_encoder - (double)right_encoder) / (ROBOT_BASE * 2048.0);
@@ -619,7 +616,7 @@ int roboteqplugin::ProcessEncoderData()
 int roboteqplugin::readEncoder(char command[6], int sizeOfCommand,int *encoder_value)
 {
 	int out;
-	if(ReadHexFromSerial(command, 1, &out))
+	if(ReadHexFromSerial(command, &out))
 		printf("readEncoder::Input Error: ReadHexFromSerial returned true!\n");fflush(stdout);
 
 		*encoder_value = out;
@@ -627,11 +624,10 @@ int roboteqplugin::readEncoder(char command[6], int sizeOfCommand,int *encoder_v
 		return 0;
 }
 
-
 int roboteqplugin::readVelocity(char command[6], int sizeOfCommand, int *RPM_right, int *RPM_left)
 {
 	int out[2];
-	if(ReadHexFromSerial(command, 2, out))
+	if(ReadHexFromSerial(command, out))
 		printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);
 
 		*RPM_right = out[0];
@@ -707,7 +703,7 @@ bool roboteqplugin::hextodec(char *inputData, unsigned int *output)
 // Input: Command string, and expected packets returned
 // Output: returns bool true on failure, false on success and a pointer to an array of interegers
 // NOTE: Please allocate the space yourself for the output pointer
-bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output)
+bool roboteqplugin::ReadHexFromSerial(char *command, int *output)
 {
 	// Send out command
 	write(roboteqplugin_fd, command, strlen(command));
@@ -717,15 +713,15 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output
 	int commandindex = 0;
 	int giveup = 0;
 
-	// Wait for the start of echo, which is the char '?'
+	// Wait for command to be echoed
 	while(true)
 	{
 		// Read single character
 		int dataread = 0;
 		int bytesread = read(roboteqplugin_fd, &dataread, 1);
-		if(dataread!=0)
-			printf("Does %d == %d??",dataread,command[commandindex]);fflush(stdout);
-			// If giveup reaches too high, we give up
+		//if(dataread!=0)
+		//printf("Does %d == %d??",dataread,command[commandindex]);fflush(stdout);
+		// If giveup reaches too high, we give up
 		if(giveup > GIVEUP_MAX)
 		{
 			printf("ReadHexFromSerial::Give up max reached\n");fflush(stdout);
@@ -753,79 +749,78 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int outputsize, int *output
 			if(commandindex > (int)strlen(command) - 2)
 				break;
 		}
-		// Read off any non-visible characters
-		int dataread;
-		do
-		{
-			// Read in a byte
-			int bytesread = read(roboteqplugin_fd, &dataread, 1);
-
-			// if error with read, return error
-			//if(bytesread < 0)
-			//{
-			//	printf("ReadHexFromSerial:: bytesread<0 \n");fflush(stdout);
-			//	return true;
-			//}
-			// If read in nothing, try again
-			// was an else if !!!
-			if(bytesread == 0)
-				giveup++;
-
-			// If we have failed too many times, give up
-			if(giveup > GIVEUP_MAX)
-			{
-				printf("ReadHexFromSerial:: give up is greater than giveup max \n");fflush(stdout);
-				return true;
-			}
-		}
-		while(!isHex(dataread));
-		printf("found hex value->%d \n",dataread);fflush(stdout);
-		// Create the input buffer
-		char buffer[16];
-		buffer[0] = (char)dataread;
-		int bufferindex = 1;
-
-		// Read in data
-		do
-		{
-			// Read in a byte
-			int bytesread = read(roboteqplugin_fd, &buffer[bufferindex], 1);
-			printf("%s ",buffer);
-			// if error with read, return error
-			//if(bytesread < 0)
-			//{
-			//	printf("ReadHexFromSerial::Bytesread<0 \n");fflush(stdout);
-			//	return true;
-			//}
-			// If read in nothing, try again, was else if!!!
-			if(bytesread == 0)
-				giveup++;
-			// Else, data read, increment index of buffer
-			else
-				bufferindex++;
-
-			// If we have failed too many times, give up
-			if(giveup > GIVEUP_MAX)
-			{
-				printf("ReadHexFromSerial::Give up is greater than giveup max \n");fflush(stdout);
-				return true;
-			}
-		}
-		while(isHex(buffer[bufferindex]));
-		printf("buffer filled \n");fflush(stdout);
-		// Cap off the hex string
-		buffer[bufferindex] = '\0';
-		printf("ReadHexFromSerial::buffer: %s----->",buffer);fflush(stdout);
-		// Convert this packet to a decimal
-		unsigned int udata = 0;
-		hextodec(buffer, &udata);
-
-		// Cast and set to given output
-		output[e] = (int)udata;
-		printf("output: %d \n",output);fflush(stdout);
 	}
+	// Read off any non-visible characters
+	int dataread;
+	do
+	{
+		// Read in a byte
+		int bytesread = read(roboteqplugin_fd, &dataread, 1);
+
+		// if error with read, return error
+		//if(bytesread < 0)
+		//{
+		//	printf("ReadHexFromSerial:: bytesread<0 \n");fflush(stdout);
+		//	return true;
+		//}
+		// If read in nothing, try again
+		// was an else if !!!
+		if(bytesread == 0)
+			giveup++;
+
+		// If we have failed too many times, give up
+		if(giveup > GIVEUP_MAX)
+		{
+			printf("ReadHexFromSerial:: give up is greater than giveup max \n");fflush(stdout);
+			return true;
+		}
+	}
+	while(!isHex(dataread));
+	//printf("found hex value->%d \n",dataread);fflush(stdout);
+	// Create the input buffer
+	char buffer[16];
+	buffer[0] = (char)dataread;
+	int bufferindex = 1;
+
+	// Read in data
+	do
+	{
+		// Read in a byte
+		int bytesread = read(roboteqplugin_fd, &buffer[bufferindex], 1);
+		//printf("%s ",buffer);
+		// if error with read, return error
+		//if(bytesread < 0)
+		//{
+		//	printf("ReadHexFromSerial::Bytesread<0 \n");fflush(stdout);
+		//	return true;
+		//}
+		// If read in nothing, try again, was else if!!!
+		if(bytesread == 0)
+			giveup++;
+		// Else, data read, increment index of buffer
+		else
+			bufferindex++;
+
+		// If we have failed too many times, give up
+		if(giveup > GIVEUP_MAX)
+		{
+			printf("ReadHexFromSerial::Give up is greater than giveup max \n");fflush(stdout);
+			return true;
+		}
+	}
+	while(isHex(buffer[bufferindex]));
+	//printf("buffer filled \n");fflush(stdout);
+	// Cap off the hex string
+	buffer[bufferindex] = '\0';
+	printf("ReadHexFromSerial::buffer: %s----->",buffer);fflush(stdout);
+	// Convert this packet to a decimal
+	unsigned int udata = 0;
+	hextodec(buffer, &udata);
+
+	// Cast and set to given output
+	*output = (int)udata;
+	//printf("output: %d \n",output);fflush(stdout);
 
 	// Return false for no error
 	return false;
 }
-

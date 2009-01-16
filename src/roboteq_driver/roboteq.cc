@@ -182,10 +182,10 @@ private:
 
 	// Converts a given string to a double value (A while number)
 	bool hextodec(char *string, int *output);
-	bool twohextodec(char *string, int *output);
+	bool HexToInt(char *String, int *DataOut);
 
 	bool ReadHexFromSerial(char *command, int *output, bool IgnoreEcho = false);
-	bool isHex(char input);
+	char isHex(char input);
 
 	// current data
 	player_position2d_data_t data;
@@ -621,10 +621,8 @@ int roboteqplugin::readEncoder(char command[6],int *encoder_value)
 		printf("readEncoder::Input Error: ReadHexFromSerial returned true!\n");
 		fflush(stdout);
 	}
-
-		*encoder_value = out;
-
-		return 0;
+	*encoder_value = out;
+	return 0;
 }
 
 int roboteqplugin::readVelocity(char command[6], int *RPM_right, int *RPM_left)
@@ -632,35 +630,66 @@ int roboteqplugin::readVelocity(char command[6], int *RPM_right, int *RPM_left)
 	int out;
 	// reads the first velocity value from the encoder
 	if(ReadHexFromSerial(command, &out))
-		{printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);}
+	{printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);}
 	*RPM_right = out;
-	// reads the second encoder value from the encoder // TODO fix the naming of the function
-	//if(ReadVelHexFromSerial(command, &out))
+
 	if(ReadHexFromSerial(command, &out, true))
-		{printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);}
+	{printf("readVeloocity::Input Error: ReadHexFromSerial returned true !\n");fflush(stdout);}
 	*RPM_left = out;
 	return 0;
 }
 
-// Takes char input and returns true if hex
-bool roboteqplugin::isHex(char input)
+// Returns the given hex character as a range of 0-15 (or 0-f) as a valid hex-dec representation; returns -1 if not valid
+char IsHex(char Value)
 {
-	// Valid set of chars
-	char valid[] = "0123456789abcdef";
+	// Check if in 0-9 range
+	if(Value >= '0' && Value <= '9')
+		return Value - '0';
+	// Check if in a-f range
+	else if(Value >= 'a' && Value <= 'f')
+		return Value - 'a' + 10;
+	// Check if in A-F range, and reutrn lower case
+	else if(Value >= 'A' && Value <= 'F')
+		return Value - 'A' + 10;
+	// Else, not valid
+	return -1;
+}
 
-	// To lower
-	input = tolower(input);
+// Given a string, return a signed integer via reference. Returns true if valid data was posted
+bool HexToInt(char *String, int *DataOut)
+{
+	// Start conversion
+	int Length = (int)strlen(String);
 
-	// Validate the character
-	bool checked = false;
-	for(int j = 0; j < (int)strlen(valid) && !checked; j++)
-		if(input == valid[j])
-			checked = true;
+	// Data holder
+	unsigned int Data = 0;
+	int BaseMultiple = 1;
 
-	// Check if checked, this was false !!!
-	if(checked == true)
-		return true;
-	return false; // Not hex
+	// For each hex char from right to left
+	for(int i = Length - 1; i >= 0; i--)
+	{
+		// Validate that it is a hex char
+		char Hex = IsHex(String[i]);
+		if(Hex == -1)
+		{
+			// Invalid char
+			printf("Cannot convert hex: %s\n", String);
+			return false;
+		}
+
+		// If valud, add to data
+		Data += (unsigned int)(Hex * BaseMultiple);
+
+		// Grow base multiple
+		BaseMultiple *= 16;
+	}
+
+	// Debug string
+	printf("Hex: %s, uint: %u, int: %d\n", String, Data, (int)Data);
+
+	// Conversion complete, post data, return true for valid
+	*DataOut = (int)Data;
+	return true;
 }
 
 // Input is a hexadecimal string
@@ -684,7 +713,7 @@ bool roboteqplugin::hextodec(char* inputData, int *output)
 	{
 		// Look at the current hex char, and cast it to a lower char if needed
 		unsigned int temp = 0;
-		if( !isHex(inputData[i]) )
+		if( isHex(inputData[i]) !=-1 )
 			return true; // Error
 
 		// If the char is a digit, cast from ASCII to decimal
@@ -728,23 +757,12 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int *output, bool IgnoreEch
 		// Read single character
 		int dataread = 0;
 		int bytesread = read(roboteqplugin_fd, &dataread, 1);
-
-		//if(dataread!=0)
-		//printf("Does %d == %d??",dataread,command[commandindex]);fflush(stdout);
 		// If giveup reaches too high, we give up
 		if(giveup > GIVEUP_MAX)
 		{
 			printf("ReadHexFromSerial::Give up max reached\n");fflush(stdout);
 			return true;
 		}
-
-		// If < 0, error    i commented this out
-		//if(bytesread < 0)
-		//{
-		//	printf("ReadHexFromSerial::Bytesread < 0\n");fflush(stdout);
-		//	return true;
-		//}
-
 		// Nothing read...
 		else if(bytesread == 0)
 		{
@@ -760,22 +778,13 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int *output, bool IgnoreEch
 				break;
 		}
 	}
-	
+
 	// Read off any non-visible characters
 	int dataread;
 	do
 	{
 		// Read in a byte
 		int bytesread = read(roboteqplugin_fd, &dataread, 1);
-
-		// if error with read, return error
-		//if(bytesread < 0)
-		//{
-		//	printf("ReadHexFromSerial:: bytesread<0 \n");fflush(stdout);
-		//	return true;
-		//}
-		// If read in nothing, try again
-		// was an else if !!!
 		if(bytesread == 0)
 			giveup++;
 
@@ -786,9 +795,8 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int *output, bool IgnoreEch
 			return true;
 		}
 	}
-	while(!isHex(dataread));
-	
-	//printf("found hex value->%d \n",dataread);fflush(stdout);
+	while(isHex(dataread) !=-1);
+
 	// Create the input buffer
 	char buffer[16];
 	buffer[0] = (char)dataread;
@@ -799,13 +807,6 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int *output, bool IgnoreEch
 	{
 		// Read in a byte
 		int bytesread = read(roboteqplugin_fd, &buffer[bufferindex], 1);
-		//printf("%s ",buffer);
-		// if error with read, return error
-		//if(bytesread < 0)
-		//{
-		//	printf("ReadHexFromSerial::Bytesread<0 \n");fflush(stdout);
-		//	return true;
-		//}
 		// If read in nothing, try again, was else if!!!
 		if(bytesread == 0)
 			giveup++;
@@ -820,17 +821,13 @@ bool roboteqplugin::ReadHexFromSerial(char *command, int *output, bool IgnoreEch
 			return true;
 		}
 	}
-	while(isHex(buffer[bufferindex]));
-	
-	//printf("buffer filled \n");fflush(stdout);
+	while(isHex(buffer[bufferindex]) !=-1);
+
 	// Cap off the hex string
 	buffer[bufferindex] = '\0';
 
-	//printf("ReadHexFromSerial::buffer: %s----->",buffer);fflush(stdout);
 	// Convert this packet to a decimal
 	hextodec(buffer, output);
-
-	//printf("output: %d \n",output);fflush(stdout);
 
 	// Return false for no error
 	return false;

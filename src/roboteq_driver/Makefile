@@ -13,7 +13,7 @@ all: $(OBJLIBS)
 
 $(OBJS): $(SRC)
 	$(ECHO) Building Roboteq Driver...
-	$(CXX) $(PRJCXXFLAGS) `pkg-config --cflags playercore` -c $(SRC)
+	$(CXX) $(PRJCXXFLAGS) `pkg-config --cflags playercore` -c -Wextra -Wall $(SRC)
 
 $(OBJLIBS): $(OBJS)
 	$(LD) $(PRJLDFLAGS)  -o $@ $^
